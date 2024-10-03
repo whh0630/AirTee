@@ -2,6 +2,21 @@ import cv2
 import dlib
 from scipy.spatial import distance
 import numpy as np
+import mediapipe as mp
+
+# Mediapipe 초기화
+mp_pose = mp.solutions.pose
+pose = mp_pose.Pose()
+mp_drawing = mp.solutions.drawing_utils
+
+
+# 눈의 EAR(Eye Aspect Ratio)를 계산하는 함수
+def calculate_ear(eye):
+    A = distance.euclidean(eye[1], eye[5])
+    B = distance.euclidean(eye[2], eye[4])
+    C = distance.euclidean(eye[0], eye[3])
+    ear = (A + B) / (2.0 * C)
+    return ear
 
 # 눈의 EAR(Eye Aspect Ratio)를 계산하는 함수
 def calculate_ear(eye):
@@ -46,15 +61,52 @@ cap = cv2.VideoCapture(0)
 
 while True:
     ret, frame = cap.read()
-    if not ret:
+    if not ret: 
         break
 
-    # 프레임을 그레이스케일로 변환
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
+    # Mediapipe
+    # BGR 이미지를 RGB로 변환
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    
+    # 신체 랜드마크 감지
+    results = pose.process(rgb_frame)
+
+    # 신체 랜드마크가 감지된 경우
+    if results.pose_landmarks:
+        # 신체 랜드마크 그리기
+        mp_drawing.draw_landmarks(frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+
+        # 어깨와 목의 좌표 추출 (좌표는 정규화되어 있으므로 이미지 크기에 맞게 조정 필요)
+        image_height, image_width, _ = frame.shape
+        left_shoulder = results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_SHOULDER]
+        right_shoulder = results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_SHOULDER]
+        nose = results.pose_landmarks.landmark[mp_pose.PoseLandmark.NOSE]
+
+        # 좌표 변환 (정규화된 좌표를 이미지 크기로 변환)
+        left_shoulder_point = (int(left_shoulder.x * image_width), int(left_shoulder.y * image_height))
+        right_shoulder_point = (int(right_shoulder.x * image_width), int(right_shoulder.y * image_height))
+        neck_point = (int(nose.x * image_width), int((left_shoulder.y + right_shoulder.y) / 2 * image_height))
+
+        # 어깨와 목에 원 그리기
+        cv2.circle(frame, left_shoulder_point, 5, (0, 255, 0), -1)
+        cv2.circle(frame, right_shoulder_point, 5, (0, 255, 0), -1)
+        cv2.circle(frame, neck_point, 5, (255, 0, 0), -1)
+
+        # 어깨와 목을 연결하는 선 그리기
+        cv2.line(frame, left_shoulder_point, neck_point, (255, 255, 0), 2)
+        cv2.line(frame, right_shoulder_point, neck_point, (255, 255, 0), 2)
+
+        dleft_ear = results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_EAR]
+        dright_ear = results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_EAR]
+        cv2.putText(frame, "LEFT_EAR: {dleft_ear}", (300, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        #cv2.putText(frame, f"RIGHT_EAR: {dright_ear:.2f}", (300, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+    # opencv dlib
+    # 프레임을 그레이스케일로 변환
+    gray = rgb_frame #cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     # 얼굴 탐지
     faces = detector(gray)
-
     for face in faces:
         # 얼굴 랜드마크 감지
         landmarks = predictor(gray, face)
@@ -76,7 +128,7 @@ while True:
         mouth_B = calculate_mouth_open(mouth)[2] 
         mouth_C = calculate_mouth_open(mouth)[3]
 
-        # 얼굴 크기 계산
+        # 얼굴 크기 계산 
         face_size = calculate_face_size(landmarks)
 
         # 입이 벌어졌는지 감지
@@ -103,10 +155,12 @@ while True:
 
         # 입 벌림 비율(Mouth Open Ratio)도 화면에 표시
         cv2.putText(frame, f"Mouth Ratio: {(mouth_open_ratio/face_size*100):.2f} / {mouth_A:.2f} / {mouth_B:.2f} / {mouth_C:.2f} / {face_size:.2f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        if mouth_open_ratio > MOUTH_THRESHOLD:
+        if (mouth_open_ratio/face_size*100) > MOUTH_THRESHOLD: 
             cv2.putText(frame, "Mouth Open", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         else:
             cv2.putText(frame, f"Mouth Close", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+
 
 
     # 결과 프레임을 화면에 표시
